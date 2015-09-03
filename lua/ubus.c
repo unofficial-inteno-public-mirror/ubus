@@ -33,6 +33,7 @@ struct ubus_lua_connection {
 struct ubus_lua_object {
 	struct ubus_object o;
 	int r;
+	struct ubus_lua_connection *conn; 
 	struct list_head list; 
 };
 
@@ -489,6 +490,9 @@ static int ubus_lua_add(lua_State *L)
 			ubus_lua_load_object(L, obj);
 			ubus_add_object(c->ctx, &obj->o);
 			
+			// set the parent connection pointer so that we can correctly destroy the object later. 
+			obj->conn = c; 
+			
 			list_add(&obj->list, &obj_list); 
 		}
 		lua_pop(L, 1);
@@ -497,14 +501,35 @@ static int ubus_lua_add(lua_State *L)
 	int nobj = 0; 
 	struct list_head *pos, *n; 
 	list_for_each_safe(pos, n, &obj_list){
-		void **handle = (void**)lua_newuserdata(L, sizeof(void*));
-		*handle = container_of(pos, struct ubus_lua_object, list); 
+		struct ubus_lua_object **handle = (struct ubus_lua_object**)lua_newuserdata(L, sizeof(void*));
+		*handle = (struct ubus_lua_object*) container_of(pos, struct ubus_lua_object, list); 
 		luaL_getmetatable(L, "ubus_lua_object");
 		lua_setmetatable(L, -2);
+		
+		// store the object in the global table
+		lua_pushstring(L, (*handle)->o.name);  
+    lua_pushvalue(L, -2); 
+    lua_settable(L, LUA_REGISTRYINDEX);
+    
 		list_del_init(pos); 
 		nobj++; 
 	}
 	return nobj;
+}
+
+static int ubus_lua_remove(lua_State *L){
+	struct ubus_lua_connection *c = luaL_checkudata(L, 1, METANAME);
+	struct ubus_lua_object **obj = (struct ubus_lua_object **)luaL_checkudata(L, 2, "ubus_lua_object");
+	if(!obj || (*obj)->conn != c) return 0; 
+	
+	ubus_remove_object((*obj)->conn->ctx, &(*obj)->o); 
+	
+	// remove the object from global registry
+	lua_pushstring(L, (*obj)->o.name);  
+	lua_pushnil(L); 
+	lua_settable(L, LUA_REGISTRYINDEX);
+	
+	return 0; 
 }
 
 static int ubus_lua_object_tostring(lua_State *L){
@@ -519,19 +544,27 @@ static int ubus_lua_object_gc(lua_State *L){
 	struct ubus_lua_object **obj_ptr = (struct ubus_lua_object **)luaL_checkudata(L, 1, "ubus_lua_object");
 	
 	if(!obj_ptr) return 0; 
+	
+	printf("Lua object gc\n"); 
+	
 	struct ubus_lua_object *obj = *obj_ptr; 
 	
-	free((char*)obj->o.type->name); 
+	if(obj->conn){
+		ubus_remove_object(obj->conn->ctx, &obj->o); 
+		obj->conn = 0; 
+	}
+	
+	//free((char*)obj->o.type->name); 
 	free(obj->o.type); 	
 	for(int c = 0; c < obj->o.n_methods; c++){
 		const struct ubus_method *m = &obj->o.methods[c]; 
-		free((char*)m->name); 
+		//free((char*)m->name); 
 		free((void*)m->policy); 
 	}
 	free((void*)obj->o.methods); 
-	free((char*)obj->o.name); 
+	//free((char*)obj->o.name); 
 	free(obj); 
-	free(obj_ptr); 
+	
 	return 0;
 }
 
@@ -725,6 +758,7 @@ static const luaL_Reg ubus[] = {
 	{ "connect", ubus_lua_connect },
 	{ "objects", ubus_lua_objects },
 	{ "add", ubus_lua_add },
+	{ "remove", ubus_lua_remove },
 	{ "reply", ubus_lua_reply },
 	{ "signatures", ubus_lua_signatures },
 	{ "call", ubus_lua_call },
