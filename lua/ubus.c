@@ -369,7 +369,7 @@ static int ubus_lua_load_methods(lua_State *L, struct ubus_method *m)
 	lua_pushvalue(L, -2);
 	lua_setfield(L, -6, lua_tostring(L, -5));
 
-	m->name = lua_tostring(L, -4);
+	m->name = strdup(lua_tostring(L, -4));
 	m->handler = ubus_method_handler;
 
 	plen = lua_gettablelen(L, -1);
@@ -411,9 +411,8 @@ static int ubus_lua_load_methods(lua_State *L, struct ubus_method *m)
 	return 0;
 }
 
-static struct ubus_object* ubus_lua_load_object(lua_State *L)
+static void ubus_lua_load_object(lua_State *L, struct ubus_lua_object *obj)
 {
-	struct ubus_lua_object *obj = NULL;
 	int mlen = lua_gettablelen(L, -1);
 	struct ubus_method *m;
 	int midx = 0;
@@ -424,7 +423,7 @@ static struct ubus_object* ubus_lua_load_object(lua_State *L)
 		return NULL;
 
 	memset(obj, 0, sizeof(struct ubus_lua_object));
-	obj->o.name = lua_tostring(L, -2);
+	obj->o.name = strdup(lua_tostring(L, -2));
 
 	/* setup method pointers */
 	m = malloc(sizeof(struct ubus_method) * mlen);
@@ -439,7 +438,7 @@ static struct ubus_object* ubus_lua_load_object(lua_State *L)
 	}
 
 	memset(obj->o.type, 0, sizeof(struct ubus_object_type));
-	obj->o.type->name = lua_tostring(L, -2);
+	obj->o.type->name = strdup(lua_tostring(L, -2));
 	obj->o.type->id = 0;
 	obj->o.type->methods = obj->o.methods;
 
@@ -470,14 +469,13 @@ static struct ubus_object* ubus_lua_load_object(lua_State *L)
 
 	/* pop the callback table */
 	lua_pop(L, 1);
-
-	return &obj->o;
 }
 
 static int ubus_lua_add(lua_State *L)
 {
 	struct ubus_lua_connection *c = luaL_checkudata(L, 1, METANAME);
-
+	int nobj = 0; 
+	
 	/* verify top level object */
 	if (lua_istable(L, 1)) {
 		lua_pushstring(L, "you need to pass a table");
@@ -488,18 +486,51 @@ static int ubus_lua_add(lua_State *L)
 	/* scan each object */
 	lua_pushnil(L);
 	while (lua_next(L, -2) != 0) {
-		struct ubus_object *obj = NULL;
+		struct ubus_lua_object *obj = NULL;
 
 		/* check if the object has a table of methods */
 		if ((lua_type(L, -2) == LUA_TSTRING) && (lua_type(L, -1) == LUA_TTABLE)) {
-			obj = ubus_lua_load_object(L);
-
-			if (obj)
-				ubus_add_object(c->ctx, obj);
+			obj = (struct ubus_lua_object *)lua_newuserdata(L, sizeof(struct ubus_lua_object));
+			luaL_getmetatable(L, "ubus_lua_object");
+			// set the metatable on the userdata
+			lua_setmetatable(L, -2);
+			
+			ubus_lua_load_object(L, obj);
+			ubus_add_object(c->ctx, &obj->o);
+			
+			nobj++; 
 		}
 		lua_pop(L, 1);
 	}
 
+	return nobj;
+}
+
+
+static int ubus_lua_object_tostring(lua_State *L){
+	struct ubus_lua_object *obj = (struct ubus_lua_object *)luaL_checkudata(L, 1, "ubus_lua_object");
+ 
+	lua_pushfstring(L, "ubus_lua_object(%s)", obj->o.name);
+ 
+	return 1;
+}
+
+static int ubus_lua_object_gc(lua_State *L){
+	struct ubus_lua_object *obj = (struct ubus_lua_object *)luaL_checkudata(L, 1, "ubus_lua_object");
+
+	if(!obj) return 0; 
+	
+	free((char*)obj->o.type->name); 
+	free(obj->o.type); 	
+	for(int c = 0; c < obj->o.n_methods; c++){
+		const struct ubus_method *m = &obj->o.methods[c]; 
+		free((char*)m->name); 
+		free((void*)m->policy); 
+	}
+	free((void*)obj->o.methods); 
+	free((char*)obj->o.name); 
+	free(obj); 
+	
 	return 0;
 }
 
@@ -674,8 +705,6 @@ ubus_lua_send(lua_State *L)
 	return 0;
 }
 
-
-
 static int
 ubus_lua__gc(lua_State *L)
 {
@@ -705,12 +734,25 @@ static const luaL_Reg ubus[] = {
 	{ NULL, NULL },
 };
 
+static const struct luaL_Reg ubus_lua_object_methods[] = {
+	{ "__gc",         ubus_lua_object_gc },
+	{ "__tostring", 	ubus_lua_object_tostring }, 
+	{ NULL,          NULL               },
+};
+
 /* avoid missing prototype warning */
 int luaopen_ubus(lua_State *L);
 
 int
 luaopen_ubus(lua_State *L)
 {
+	// setup metatable for ubus object
+	luaL_newmetatable(L, "ubus_lua_object");
+	lua_pushvalue(L, -1);
+	lua_setfield(L, -2, "__index");
+	luaL_register(L, NULL, ubus_lua_object_methods);
+	lua_pop(L, 1);
+	
 	/* create metatable */
 	luaL_newmetatable(L, METANAME);
 
