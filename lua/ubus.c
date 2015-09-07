@@ -664,9 +664,15 @@ ubus_event_handler(struct ubus_context *ctx, struct ubus_event_handler *ev,
 	lua_rawgeti(state, -1, listener->r);
 
 	if (lua_isfunction(state, -1)) {
+		lua_newtable(state); 
 		lua_pushstring(state, type); 
+		
 		ubus_lua_parse_blob_array(state, blob_data(msg), blob_len(msg), true);
-		lua_call(state, 2, 0);
+		
+		// set the type = blobdata in the table
+		lua_rawset(state, -3); 
+		
+		lua_call(state, 1, 0);
 	}
 }
 
