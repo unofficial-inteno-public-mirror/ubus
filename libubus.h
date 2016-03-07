@@ -150,6 +150,7 @@ struct ubus_context {
 	struct ubus_msghdr_buf msgbuf;
 	uint32_t msgbuf_data_len;
 	int msgbuf_reduction_counter;
+	struct blob_buf b;
 };
 
 struct ubus_object_data {

@@ -96,12 +96,12 @@ void __hidden ubus_process_obj_msg(struct ubus_context *ctx, struct ubus_msghdr_
 	void (*cb)(struct ubus_context *, struct ubus_msghdr *,
 		   struct ubus_object *, struct blob_attr **);
 	struct ubus_msghdr *hdr = &buf->hdr;
-	struct blob_attr **attrbuf;
+	struct blob_attr *attrbuf[UBUS_ATTR_MAX];
 	struct ubus_object *obj;
 	uint32_t objid;
 	void *prev_data = NULL;
 
-	attrbuf = ubus_parse_msg(buf->data);
+	ubus_parse_msg(attrbuf, buf->data);
 	if (!attrbuf[UBUS_ATTR_OBJID])
 		return;
 
@@ -140,7 +140,8 @@ void __hidden ubus_process_obj_msg(struct ubus_context *ctx, struct ubus_msghdr_
 static void ubus_add_object_cb(struct ubus_request *req, int type, struct blob_attr *msg)
 {
 	struct ubus_object *obj = req->priv;
-	struct blob_attr **attrbuf = ubus_parse_msg(msg);
+	struct blob_attr *attrbuf[UBUS_ATTR_MAX];
+	ubus_parse_msg(attrbuf, msg);
 
 	if (!attrbuf[UBUS_ATTR_OBJID])
 		return;
@@ -154,34 +155,34 @@ static void ubus_add_object_cb(struct ubus_request *req, int type, struct blob_a
 	avl_insert(&req->ctx->objects, &obj->avl);
 }
 
-static void ubus_push_method_data(const struct ubus_method *m)
+static void ubus_push_method_data(struct blob_buf *b, const struct ubus_method *m)
 {
 	void *mtbl;
 	int i;
 
-	mtbl = blobmsg_open_table(&b, m->name);
+	mtbl = blobmsg_open_table(b, m->name);
 
 	for (i = 0; i < m->n_policy; i++) {
 		if (m->mask && !(m->mask & (1 << i)))
 			continue;
 
-		blobmsg_add_u32(&b, m->policy[i].name, m->policy[i].type);
+		blobmsg_add_u32(b, m->policy[i].name, m->policy[i].type);
 	}
 
-	blobmsg_close_table(&b, mtbl);
+	blobmsg_close_table(b, mtbl);
 }
 
-static bool ubus_push_object_type(const struct ubus_object_type *type)
+static bool ubus_push_object_type(struct blob_buf *b, const struct ubus_object_type *type)
 {
 	void *s;
 	int i;
 
-	s = blob_nest_start(&b, UBUS_ATTR_SIGNATURE);
+	s = blob_nest_start(b, UBUS_ATTR_SIGNATURE);
 
 	for (i = 0; i < type->n_methods; i++)
-		ubus_push_method_data(&type->methods[i]);
+		ubus_push_method_data(b, &type->methods[i]);
 
-	blob_nest_end(&b, s);
+	blob_nest_end(b, s);
 
 	return true;
 }
@@ -191,18 +192,18 @@ int ubus_add_object(struct ubus_context *ctx, struct ubus_object *obj)
 	struct ubus_request req;
 	int ret;
 
-	blob_buf_init(&b, 0);
+	blob_buf_init(&ctx->b, 0);
 
 	if (obj->name && obj->type) {
-		blob_put_string(&b, UBUS_ATTR_OBJPATH, obj->name);
+		blob_put_string(&ctx->b, UBUS_ATTR_OBJPATH, obj->name);
 
 		if (obj->type->id)
-			blob_put_int32(&b, UBUS_ATTR_OBJTYPE, obj->type->id);
-		else if (!ubus_push_object_type(obj->type))
+			blob_put_int32(&ctx->b, UBUS_ATTR_OBJTYPE, obj->type->id);
+		else if (!ubus_push_object_type(&ctx->b, obj->type))
 			return UBUS_STATUS_INVALID_ARGUMENT;
 	}
 
-	if (ubus_start_request(ctx, &req, b.head, UBUS_MSG_ADD_OBJECT, 0) < 0)
+	if (ubus_start_request(ctx, &req, ctx->b.head, UBUS_MSG_ADD_OBJECT, 0) < 0)
 		return UBUS_STATUS_INVALID_ARGUMENT;
 
 	req.raw_data_cb = ubus_add_object_cb;
@@ -220,7 +221,8 @@ int ubus_add_object(struct ubus_context *ctx, struct ubus_object *obj)
 static void ubus_remove_object_cb(struct ubus_request *req, int type, struct blob_attr *msg)
 {
 	struct ubus_object *obj = req->priv;
-	struct blob_attr **attrbuf = ubus_parse_msg(msg);
+	struct blob_attr *attrbuf[UBUS_ATTR_MAX];
+	ubus_parse_msg(attrbuf, msg);
 
 	if (!attrbuf[UBUS_ATTR_OBJID])
 		return;
@@ -238,10 +240,10 @@ int ubus_remove_object(struct ubus_context *ctx, struct ubus_object *obj)
 	struct ubus_request req;
 	int ret;
 
-	blob_buf_init(&b, 0);
-	blob_put_int32(&b, UBUS_ATTR_OBJID, obj->id);
+	blob_buf_init(&ctx->b, 0);
+	blob_put_int32(&ctx->b, UBUS_ATTR_OBJID, obj->id);
 
-	if (ubus_start_request(ctx, &req, b.head, UBUS_MSG_REMOVE_OBJECT, 0) < 0)
+	if (ubus_start_request(ctx, &req, ctx->b.head, UBUS_MSG_REMOVE_OBJECT, 0) < 0)
 		return UBUS_STATUS_INVALID_ARGUMENT;
 
 	req.raw_data_cb = ubus_remove_object_cb;

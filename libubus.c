@@ -22,7 +22,7 @@
 #include "libubus-internal.h"
 #include "ubusmsg.h"
 
-const char *__ubus_strerror[__UBUS_STATUS_LAST] = {
+static const char* const __ubus_strerror[__UBUS_STATUS_LAST] = {
 	[UBUS_STATUS_OK] = "Success",
 	[UBUS_STATUS_INVALID_COMMAND] = "Invalid command",
 	[UBUS_STATUS_INVALID_ARGUMENT] = "Invalid argument",
@@ -35,8 +35,6 @@ const char *__ubus_strerror[__UBUS_STATUS_LAST] = {
 	[UBUS_STATUS_UNKNOWN_ERROR] = "Unknown error",
 	[UBUS_STATUS_CONNECTION_FAILED] = "Connection failed",
 };
-
-struct blob_buf b __hidden = {};
 
 struct ubus_pending_msg {
 	struct list_head list;
@@ -130,10 +128,10 @@ static void ubus_lookup_cb(struct ubus_request *ureq, int type, struct blob_attr
 {
 	struct ubus_lookup_request *req;
 	struct ubus_object_data obj;
-	struct blob_attr **attr;
+	struct blob_attr *attr[UBUS_ATTR_MAX];
 
 	req = container_of(ureq, struct ubus_lookup_request, req);
-	attr = ubus_parse_msg(msg);
+	ubus_parse_msg(attr, msg);
 
 	if (!attr[UBUS_ATTR_OBJID] || !attr[UBUS_ATTR_OBJPATH] ||
 	    !attr[UBUS_ATTR_OBJTYPE])
@@ -152,11 +150,11 @@ int ubus_lookup(struct ubus_context *ctx, const char *path,
 {
 	struct ubus_lookup_request lookup;
 
-	blob_buf_init(&b, 0);
+	blob_buf_init(&ctx->b, 0);
 	if (path)
-		blob_put_string(&b, UBUS_ATTR_OBJPATH, path);
+		blob_put_string(&ctx->b, UBUS_ATTR_OBJPATH, path);
 
-	if (ubus_start_request(ctx, &lookup.req, b.head, UBUS_MSG_LOOKUP, 0) < 0)
+	if (ubus_start_request(ctx, &lookup.req, ctx->b.head, UBUS_MSG_LOOKUP, 0) < 0)
 		return UBUS_STATUS_INVALID_ARGUMENT;
 
 	lookup.req.raw_data_cb = ubus_lookup_cb;
@@ -167,10 +165,10 @@ int ubus_lookup(struct ubus_context *ctx, const char *path,
 
 static void ubus_lookup_id_cb(struct ubus_request *req, int type, struct blob_attr *msg)
 {
-	struct blob_attr **attr;
+	struct blob_attr *attr[UBUS_ATTR_MAX];
 	uint32_t *id = req->priv;
 
-	attr = ubus_parse_msg(msg);
+	ubus_parse_msg(attr, msg);
 
 	if (!attr[UBUS_ATTR_OBJID])
 		return;
@@ -182,11 +180,11 @@ int ubus_lookup_id(struct ubus_context *ctx, const char *path, uint32_t *id)
 {
 	struct ubus_request req;
 
-	blob_buf_init(&b, 0);
+	blob_buf_init(&ctx->b, 0);
 	if (path)
-		blob_put_string(&b, UBUS_ATTR_OBJPATH, path);
+		blob_put_string(&ctx->b, UBUS_ATTR_OBJPATH, path);
 
-	if (ubus_start_request(ctx, &req, b.head, UBUS_MSG_LOOKUP, 0) < 0)
+	if (ubus_start_request(ctx, &req, ctx->b.head, UBUS_MSG_LOOKUP, 0) < 0)
 		return UBUS_STATUS_INVALID_ARGUMENT;
 
 	req.raw_data_cb = ubus_lookup_id_cb;
@@ -251,15 +249,15 @@ int ubus_send_event(struct ubus_context *ctx, const char *id,
 	struct ubus_request req;
 	void *s;
 
-	blob_buf_init(&b, 0);
-	blob_put_int32(&b, UBUS_ATTR_OBJID, UBUS_SYSTEM_OBJECT_EVENT);
-	blob_put_string(&b, UBUS_ATTR_METHOD, "send");
-	s = blob_nest_start(&b, UBUS_ATTR_DATA);
-	blobmsg_add_string(&b, "id", id);
-	blobmsg_add_field(&b, BLOBMSG_TYPE_TABLE, "data", blob_data(data), blob_len(data));
-	blob_nest_end(&b, s);
+	blob_buf_init(&ctx->b, 0);
+	blob_put_int32(&ctx->b, UBUS_ATTR_OBJID, UBUS_SYSTEM_OBJECT_EVENT);
+	blob_put_string(&ctx->b, UBUS_ATTR_METHOD, "send");
+	s = blob_nest_start(&ctx->b, UBUS_ATTR_DATA);
+	blobmsg_add_string(&ctx->b, "id", id);
+	blobmsg_add_field(&ctx->b, BLOBMSG_TYPE_TABLE, "data", blob_data(data), blob_len(data));
+	blob_nest_end(&ctx->b, s);
 
-	if (ubus_start_request(ctx, &req, b.head, UBUS_MSG_INVOKE, UBUS_SYSTEM_OBJECT_EVENT) < 0)
+	if (ubus_start_request(ctx, &req, ctx->b.head, UBUS_MSG_INVOKE, UBUS_SYSTEM_OBJECT_EVENT) < 0)
 		return UBUS_STATUS_INVALID_ARGUMENT;
 
 	return ubus_complete_request(ctx, &req, 0);
@@ -353,7 +351,7 @@ struct ubus_context *ubus_connect(const char *path)
 
 void ubus_shutdown(struct ubus_context *ctx)
 {
-	blob_buf_free(&b);
+	blob_buf_free(&ctx->b);
 	close(ctx->sock.fd);
 	free(ctx->msgbuf.data);
 }

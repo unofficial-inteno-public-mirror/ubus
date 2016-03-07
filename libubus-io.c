@@ -31,7 +31,7 @@
 
 #define UBUS_MSGBUF_REDUCTION_INTERVAL	16
 
-static const struct blob_attr_info ubus_policy[UBUS_ATTR_MAX] = {
+static const struct blob_attr_info const ubus_policy[UBUS_ATTR_MAX] = {
 	[UBUS_ATTR_STATUS] = { .type = BLOB_ATTR_INT32 },
 	[UBUS_ATTR_OBJID] = { .type = BLOB_ATTR_INT32 },
 	[UBUS_ATTR_OBJPATH] = { .type = BLOB_ATTR_STRING },
@@ -41,12 +41,10 @@ static const struct blob_attr_info ubus_policy[UBUS_ATTR_MAX] = {
 	[UBUS_ATTR_SUBSCRIBERS] = { .type = BLOB_ATTR_NESTED },
 };
 
-static struct blob_attr *attrbuf[UBUS_ATTR_MAX];
-
-__hidden struct blob_attr **ubus_parse_msg(struct blob_attr *msg)
+__hidden void ubus_parse_msg(struct blob_attr **attrbuf, struct blob_attr *msg)
 {
 	blob_parse(msg, attrbuf, ubus_policy, UBUS_ATTR_MAX);
-	return attrbuf;
+	return;
 }
 
 static void wait_data(int fd, bool write)
@@ -59,7 +57,7 @@ static void wait_data(int fd, bool write)
 
 static int writev_retry(int fd, struct iovec *iov, int iov_len, int sock_fd)
 {
-	static struct {
+	struct {
 		struct cmsghdr h;
 		int fd;
 	} fd_buf = {
@@ -137,8 +135,8 @@ int __hidden ubus_send_msg(struct ubus_context *ctx, uint32_t seq,
 	hdr.peer = peer;
 
 	if (!msg) {
-		blob_buf_init(&b, 0);
-		msg = b.head;
+		blob_buf_init(&ctx->b, 0);
+		msg = ctx->b.head;
 	}
 
 	iov[1].iov_base = (char *) msg;
@@ -157,7 +155,7 @@ int __hidden ubus_send_msg(struct ubus_context *ctx, uint32_t seq,
 static int recv_retry(int fd, struct iovec *iov, bool wait, int *recv_fd)
 {
 	int bytes, total = 0;
-	static struct {
+	struct {
 		struct cmsghdr h;
 		int fd;
 	} fd_buf = {
