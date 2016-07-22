@@ -300,10 +300,14 @@ static void ubus_auto_reconnect_cb(struct uloop_timeout *timeout)
 {
 	struct ubus_auto_conn *conn = container_of(timeout, struct ubus_auto_conn, timer);
 
-	if (!ubus_reconnect(&conn->ctx, conn->path))
+	if (!ubus_reconnect(&conn->ctx, conn->path)) {
 		ubus_add_uloop(&conn->ctx);
-	else
+		if (conn->cb)
+			conn->cb(&conn->ctx);
+	} else {
 		uloop_timeout_set(timeout, 1000);
+		fprintf(stderr, "failed to connect to ubus\n");
+	}
 }
 
 static void ubus_auto_disconnect_cb(struct ubus_context *ctx)
